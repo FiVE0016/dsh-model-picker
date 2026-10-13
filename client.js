@@ -172,6 +172,38 @@
       const React = require('react')
       const { useCallback, useEffect, useMemo, useRef, useState } = React
 
+      // ------------------------------------------------------------------ icons
+
+      // The host's built-in icon set (@deepseek-ai/dsh-client-ui-primitives) has no
+      // whale glyph, so the model-picker contributes its own. The signature matches
+      // the IconProps contract ({size, className}) the host's icon components
+      // expose, and fill="currentColor" inherits the chip's text colour.
+      function WhaleIcon({ size = 16, className }) {
+        return React.createElement('svg', {
+          viewBox: '0 0 16 16',
+          width: size,
+          height: size,
+          className,
+          fill: 'currentColor',
+          xmlns: 'http://www.w3.org/2000/svg'
+        },
+          // Body
+          React.createElement('path', {
+            d: 'M2.5 9C2.5 6.5 4.5 5 7 5h3c1.5 0 3 1 3.5 2.5L15 9l-1.5 1.5C12.5 12 10 12 8 12H5.5C3.5 12 2.5 10.5 2.5 9z'
+          }),
+          // Tail fin
+          React.createElement('path', {
+            d: 'M12 7l2-1v4l-2-1z'
+          }),
+          // Eye
+          React.createElement('circle', { cx: '5.5', cy: '8.5', r: '0.5', fill: '#fff' }),
+          // Water spout
+          React.createElement('path', {
+            d: 'M7 3v2M6 3.5c0 .5.5 1 1 1s1-.5 1-1'
+          })
+        )
+      }
+
       // ------------------------------------------------------------------ the store
 
       // The per-session instance the framework mints for this registration. Kept
@@ -782,7 +814,8 @@
             commandId: 'sidebar.model-picker',
             order: 10,
             title: () => t('guide.title'),
-            description: () => t('guide.description')
+            description: () => t('guide.description'),
+            icon: WhaleIcon
           }]
         })
         mark('tab 类型已注册')

@@ -1,5 +1,9 @@
 # 更新记录
 
+## 0.3.2 — 鲸鱼图标
+- **右栏「模型」tab 指南页菜单加图标** — 新增 `WhaleIcon` 自定义 SVG 组件，填入 `guide[].icon`。宿主内置图标库无鲸鱼，自绘一个与宿主图标风格一致的极简鲸鱼（body + tail fin + eye + water spout），fill="currentColor" 继承文字颜色。
+- 查找 tab（dsh-fold-polish）同时加了 `IconSearchOutline16` 放大镜图标。
+
 ## 0.3.1 — 新对话面板空白修复 + 快捷键全删
 
 - **修复：每次打开新对话面板空白** — `inject` 回调里 `live ?? storeHandle.latest()` 会让模块级变量 `live` 永久锁在第一次对话的实例上；`??` 短路使得后续所有新对话的 `inject` 都不再更新 `live`，`kick()` 一直读旧实例，新对话的 store 从未被填充。改为直接 `live = storeHandle.latest()`，让 `live` 跟随框架最新 mint 的实例。
