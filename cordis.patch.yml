@@ -1,0 +1,5 @@
+# Bundle patch for this plugin. The host applies it after every bundle layer,
+# so the insert row below is what puts this plugin into the profile's bundle.
+- insert:
+    - id: model-picker
+      name: 'dsh-model-picker'
