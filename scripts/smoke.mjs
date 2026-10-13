@@ -204,9 +204,10 @@ const mod = reg.factory((specifier) => {
 })
 
 assert(Array.isArray(mod.inject), 'module exposes inject array')
-for (const name of ['slots', 'locale', 'sessions', 'remote', 'remote.session', 'shortcuts', 'sidebarRight', 'sidebarRightTabs']) {
+for (const name of ['slots', 'locale', 'sessions', 'remote', 'remote.session', 'sidebarRight', 'sidebarRightTabs']) {
   assert(mod.inject.includes(name), `inject declares ${name}`)
 }
+assert(!mod.inject.includes('shortcuts'), 'inject does NOT declare shortcuts (removed in 0.3.1)')
 assert(typeof mod.apply === 'function', 'module exposes apply(ctx, require)')
 
 const dispose = mod.apply(ctx, (s) => {
@@ -241,14 +242,10 @@ await new Promise((r) => setTimeout(r, 20))
 assert(calls.length === 0, 'no catalog load before the framework mints a store')
 assert(minted.length === 1, `framework minted exactly one store instance (got ${minted.length})`)
 
-// A shortcut was registered so the guide entry has a command and a binding.
-assert(registeredShortcuts.length === 1, `one shortcut registered (got ${registeredShortcuts.length})`)
-assert(registeredShortcuts[0].id === 'sidebar.model-picker', 'shortcut id matches the guide commandId')
-assert(typeof registeredShortcuts[0].resolve === 'function', 'shortcut has a resolve()')
-const resolved = registeredShortcuts[0].resolve()
-assert(resolved?.status === 'handled', 'shortcut resolves to handled')
-resolved.run()
-assert(openTabCalls.includes('model-picker'), 'running the shortcut opens the tab by kind')
+// 0.3.1: no shortcuts are registered. The tab is opened only by clicking its
+// entry in the right-sidebar tab strip; the plugin stays out of the host's
+// shortcut table entirely. This assertion locks that guarantee in place.
+assert(registeredShortcuts.length === 0, `no shortcuts registered (got ${registeredShortcuts.length})`)
 
 // Render the body the way the seat does: inject(sessionId, actions) returns the
 // props, and the framework supplies the bound useStore for the minted instance.
@@ -394,6 +391,26 @@ assert(effortSelects.length === before + 1, 'clicking an effort chip submits a s
 const last = effortSelects[effortSelects.length - 1][1]
 assert(last.model === 'hy3-x0.00', 'effort change keeps the active model')
 assert(last.reasoningEffort === 'low', `effort change sends the clicked effort (got ${last.reasoningEffort})`)
+
+// Multi-session regression (0.3.1): the framework mints one store per session
+// and calls inject() for each. `live` is module-level and must rebind on every
+// inject, otherwise a second session's store never gets filled and its panel
+// comes up blank — the "opens empty on every new conversation" bug. This test
+// mints a second instance the way the framework would and verifies the second
+// inject actually reaches it.
+{
+  const storeHandle = bodyRows[0].spec.store
+  assert(typeof storeHandle?.create === 'function', 'store handle exposes create()')
+  const beforeLatest = storeHandle.latest()
+  const second = storeHandle.create()
+  assert(second !== beforeLatest, 'storeHandle.create() mints a distinct instance')
+  assert(storeHandle.latest() === second, 'storeHandle.latest() points at the newest instance')
+  assert(second.getSnapshot().catalog === null, 'second store starts empty')
+  bodyRows[0].inject('sess-2', second.actions)
+  await new Promise((r) => setTimeout(r, 20))
+  assert(second.getSnapshot().catalog !== null,
+    'the second session\'s store is filled too (regression: blank on every new conversation)')
+}
 
 // Disposal must not throw.
 assert(typeof dispose === 'function', 'apply() returns a disposer')

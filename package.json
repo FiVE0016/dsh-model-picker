@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-picker",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Native right-sidebar tab that lists every model the host currently advertises, grouped by provider, highlights the active one, and switches the session model on click.",
   "keywords": [
     "dsh",
@@ -36,7 +36,6 @@
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-api-session-controller",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-shortcuts",
         "@deepseek-ai/dsh-client-ui-model-selection",
         "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-client-ui-sidebar-right"

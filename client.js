@@ -38,7 +38,6 @@
       'modelDirectories',
       'remote',
       'remote.session',
-      'shortcuts',
       'sidebarRight',
       'sidebarRightTabs'
     ]
@@ -822,11 +821,14 @@
             // in apply — is already initialized by the time this runs. The initial-
             // load effect also calls kick, but the guard inside makes the second
             // call a no-op.
-            const instance = live ?? storeHandle.latest()
-            if (instance !== null) {
-              live = instance
-              kick()
-            }
+            // Always take the framework's latest-minted instance, never the cached
+            // `live`. `live` is a module-level variable that survives across
+            // sessions; if it were kept on subsequent inject calls the new session's
+            // store would never be assigned — kick() would still read the old
+            // instance and the panel would come up empty. That is exactly the
+            // "opens blank on every new conversation" bug.
+            live = storeHandle.latest()
+            if (live !== null) kick()
             return {
               actions,
               t,
@@ -845,34 +847,10 @@
         return ctx.locale.register(NS, { zh, en })
       }, NS + ': dictionaries'))
 
-      // Command to open the tab, matching the guide entry's commandId. The host
-      // exposes commands through the shortcuts service (there is no shell.command
-      // slot); registering here also gives the entry its unboxed shortcut text.
-      // Guarded: a missing shortcuts service must not take the whole fiber down.
-      disposers.push(ctx.effect(() => {
-        if (typeof ctx.shortcuts?.register !== 'function') {
-          mark('shortcuts 不可用，跳过命令注册')
-          return () => {}
-        }
-        return ctx.shortcuts.register({
-          id: 'sidebar.model-picker',
-          label: () => t('guide.title'),
-          aliases: ['model', 'models', '模型'],
-          defaults: {
-            'desktop:windows': { code: 'KeyM', modifiers: ['primary', 'alt'] },
-            'desktop:macos': { code: 'KeyM', modifiers: ['primary', 'alt'] },
-            'desktop:linux': { code: 'KeyM', modifiers: ['primary', 'alt'] },
-            'web:windows': { code: 'KeyM', modifiers: ['primary', 'alt'] },
-            'web:macos': { code: 'KeyM', modifiers: ['primary', 'alt'] }
-          },
-          regions: ['page'],
-          modals: [],
-          resolve: () => ({
-            status: 'handled',
-            run: () => { ctx.sidebarRight.openTab(TAB_KIND) }
-          })
-        })
-      }, NS + ': command'))
+      // Command registration removed in 0.3.1 at user request: this plugin registers
+      // no shortcuts / commands / aliases. The tab is opened by clicking its entry
+      // in the right-sidebar tab strip (or by another host action that calls
+      // ctx.sidebarRight.openTab).
 
       // Load the catalog as soon as there is an instance to fill. `ctx.remote.*`
       // namespaces mount asynchronously, so this also retries until the API answers

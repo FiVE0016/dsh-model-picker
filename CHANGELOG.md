@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.3.1 — 新对话面板空白修复 + 快捷键全删
+
+- **修复：每次打开新对话面板空白** — `inject` 回调里 `live ?? storeHandle.latest()` 会让模块级变量 `live` 永久锁在第一次对话的实例上；`??` 短路使得后续所有新对话的 `inject` 都不再更新 `live`，`kick()` 一直读旧实例，新对话的 store 从未被填充。改为直接 `live = storeHandle.latest()`，让 `live` 跟随框架最新 mint 的实例。
+- **删除所有快捷键与命令注册**（应你要求） — 移除 `ctx.shortcuts.register({ id: 'sidebar.model-picker', ... })` 整段（原绑定 `Ctrl+Alt+M`）；同步从 `inject` 服务清单移除 `'shortcuts'`，从 `package.json` 的 `dsh.client.inject` 里移除 `@deepseek-ai/dsh-client-shortcuts`。tab 现在只能靠右栏 tab 栏点击打开，不再占用任何组合键。
+
 ## 0.3.0 — 目录结构兼容修复
 
 - **修复：目录加载后 catalog 为空** — `directory.load()` 返回 `{groups, current, routable, failures, status, pending, error}` 时，插件原先期望 `{catalog: {groups, default}}` 或 `{value: {groups, default}}`，导致 catalog 被设为 null。现在自动识别两种结构并映射为内部格式。
