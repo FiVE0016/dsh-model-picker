@@ -79,6 +79,8 @@ const CATALOG = {
 }
 
 const calls = []
+/** calls.length at the moment the framework first mints a store (must still be 0). */
+let callsAtFirstMint = null
 const openTabCalls = []
 const directoryForCalls = []
 
@@ -103,6 +105,7 @@ const slots = {
     if (spec.store === undefined || typeof spec.store.create !== 'function') {
       throw new TypeError('handle.create is not a function')
     }
+    if (callsAtFirstMint === null) callsAtFirstMint = calls.length
     const instance = spec.store.create('sess-1')
     minted.push(instance)
     registeredSlots.push({
@@ -193,6 +196,15 @@ const assert = (cond, msg) => { if (!cond) { console.error('FAIL ' + msg); proce
 assert(registrations.length === 1, 'bundle registered exactly one module')
 const reg = registrations[0]
 
+// The host only serves this bundle when the registration id equals the package
+// name: dsh-client-modules resolves the row's module and accepts the nearest
+// package.json only if its `name` matches the row name exactly. An unscoped id
+// makes the host report "declares no client bundle" and the tab silently
+// disappears (this is exactly what the 2026-10-14 npm scope rename caused).
+const pkgManifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+assert(reg.id === pkgManifest.name, `registration id equals the package name (got ${reg.id}, package ${pkgManifest.name})`)
+assert(reg.name === undefined || reg.name === pkgManifest.name, 'registration carries no conflicting name')
+
 // The resolver the host hands to factory() throws on anything outside the graph,
 // so a strict resolver here reproduces the real failure mode exactly.
 const required = []
@@ -209,6 +221,7 @@ for (const name of ['slots', 'locale', 'sessions', 'remote', 'remote.session', '
 }
 assert(!mod.inject.includes('shortcuts'), 'inject does NOT declare shortcuts (removed in 0.3.1)')
 assert(typeof mod.apply === 'function', 'module exposes apply(ctx, require)')
+assert(mod.name === pkgManifest.name, `module name equals the package name (got ${mod.name})`)
 
 const dispose = mod.apply(ctx, (s) => {
   required.push(s)
@@ -236,10 +249,13 @@ assert(bodyRows.length === 1, `one tab body registered (got ${bodyRows.length})`
 assert(bodyRows[0].spec.key === def.id, `body key matches the definition id (got ${bodyRows[0].spec.key})`)
 assert(typeof bodyRows[0].Body === 'function', 'body is a React component')
 
-// No load happens before the framework mints an instance — the plugin must not
-// mint a throwaway of its own, or `latest()` would point at the wrong store.
+// No directory load may happen BEFORE the framework mints an instance, and the
+// plugin must never mint a throwaway of its own (that is what leaves `latest()`
+// pointing at the wrong store). Loading right AFTER the mint is legitimate: the
+// plugin resolves the instance by session id, so a pre-inject load lands on the
+// panel's own instance instead of silently going nowhere.
 await new Promise((r) => setTimeout(r, 20))
-assert(calls.length === 0, 'no catalog load before the framework mints a store')
+assert(callsAtFirstMint === 0, `no catalog load before the framework mints a store (got ${callsAtFirstMint})`)
 assert(minted.length === 1, `framework minted exactly one store instance (got ${minted.length})`)
 
 // 0.3.1: no shortcuts are registered. The tab is opened only by clicking its
@@ -392,24 +408,36 @@ const last = effortSelects[effortSelects.length - 1][1]
 assert(last.model === 'hy3-x0.00', 'effort change keeps the active model')
 assert(last.reasoningEffort === 'low', `effort change sends the clicked effort (got ${last.reasoningEffort})`)
 
-// Multi-session regression (0.3.1): the framework mints one store per session
-// and calls inject() for each. `live` is module-level and must rebind on every
-// inject, otherwise a second session's store never gets filled and its panel
-// comes up blank — the "opens empty on every new conversation" bug. This test
-// mints a second instance the way the framework would and verifies the second
-// inject actually reaches it.
+// Multi-session regression (2026-10-14, the "没有可用的模型。" bug): the framework
+// mints ONE store instance PER SESSION (renderer.resolveStore calls
+// handle.create(scopeBinding.key)) and hands each panel its OWN instance's
+// actions. Resolving the instance through `latest()` — "whoever minted last" —
+// therefore writes the catalog into a DIFFERENT session's store, so the panel
+// reads its own empty state: "没有可用的模型。", an empty "当前：", no error at all.
+//
+// This reproduces that mint contract with two sessions arranged so `latest()`
+// points at the WRONG one, then asserts the load landed on the injected session
+// and left the other untouched. Under the old latest()-based code both
+// assertions fail.
 {
   const storeHandle = bodyRows[0].spec.store
   assert(typeof storeHandle?.create === 'function', 'store handle exposes create()')
-  const beforeLatest = storeHandle.latest()
-  const second = storeHandle.create()
-  assert(second !== beforeLatest, 'storeHandle.create() mints a distinct instance')
-  assert(storeHandle.latest() === second, 'storeHandle.latest() points at the newest instance')
-  assert(second.getSnapshot().catalog === null, 'second store starts empty')
-  bodyRows[0].inject('sess-2', second.actions)
+  assert(typeof storeHandle?.forScope === 'function', 'store handle exposes forScope()')
+  assert(storeHandle.forScope('sess-1') !== null, 'the framework-minted sess-1 instance is addressable by session id')
+
+  const target = storeHandle.create('sess-9')   // the session we will inject for
+  const other = storeHandle.create('sess-10')   // minted later -> latest() points HERE
+  assert(other !== target, 'each session gets a distinct instance')
+  assert(storeHandle.latest() === other, 'latest() is the newest session (this is the trap under test)')
+  assert(target.getSnapshot().catalog === null && other.getSnapshot().catalog === null,
+    'both new sessions start empty')
+
+  bodyRows[0].inject('sess-9', target.actions)
   await new Promise((r) => setTimeout(r, 20))
-  assert(second.getSnapshot().catalog !== null,
-    'the second session\'s store is filled too (regression: blank on every new conversation)')
+  assert(target.getSnapshot().catalog !== null,
+    'the injected session\'s own store receives the catalog')
+  assert(other.getSnapshot().catalog === null,
+    'the other session\'s store is left untouched (regression: multi-session panel empty)')
 }
 
 // Disposal must not throw.

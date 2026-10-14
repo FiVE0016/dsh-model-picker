@@ -19,15 +19,47 @@
 
 ## 安装
 
+### 方式 A：npm（已发布）
+
+npm 包名 `@five0016/dsh-model-picker`（**已发布，latest = 0.3.2**）。
+
+⚠ **作用域名必须贯穿到"注册名"**（2026-10-14 踩坑实证，本条此前写反过）：
+宿主的客户端图（`dsh-client-modules`）按 bundle 行的 `name` 去解析模块，然后从模块所在目录
+**向上找最近的 package.json，只认 `name` 字段与行名完全相等的那一个**（`nearestPackage`）。
+所以下面四处**必须都是同一个带作用域的名字**，少改一处就会**静默**不加载客户端 bundle
+（宿主半可能照常加载，但右栏 tab 直接消失、控制台**不报错**）：
+
+| 位置 | 值 |
+|---|---|
+| `package.json` → `name` | `@five0016/dsh-model-picker` |
+| `cordis.patch.yml` → `insert[].name` | `@five0016/dsh-model-picker` |
+| `index.js` → `export const name` | `@five0016/dsh-model-picker` |
+| `client.js` → `__ModuleLoader__.load({ id })` | `@five0016/dsh-model-picker` |
+
+（只有"tab 内部身份"可以另取名：`sidebarRightTabs.register({ id })` 与
+`ctx.slots.register({ key })` 用的是 `dsh-model-picker`，两者必须互相同名，但不必等于包名。）
+
+```bash
+cd ~/.dsh/profiles/desktop
+pnpm add @five0016/dsh-model-picker
+# 然后 ~/.dsh/profiles/desktop/package.json → dsh.profile.bundles 追加
+#   "@five0016/dsh-model-picker"
+```
+
+### 方式 B：link 本地开发（当前在用）
+
 桌面 profile 的插件装在 `~/.dsh/profiles/desktop/`。已装好（本次会话完成）：
 
 ```bash
 # 1) 以 link: 方式加入 profile 依赖（与 dsh-fold-polish 相同机制）
+#    依赖名必须写带作用域的包名，pnpm 才会在 node_modules\@five0016\ 下建软链
 cd ~/.dsh/profiles/desktop
 pnpm add "link:C:/Users/FiVE/Documents/deepseek-harness/default-workspace/plugins/dsh-model-picker"
+# 再手动把 dependencies 的键名改成 "@five0016/dsh-model-picker"（pnpm add 可能按目录名写成无作用域的键）
 
 # 2) 手动补进 dsh.profile.bundles（dsh plugin 是 pnpm 透传，不会自动写这个数组）
-#    ~/.dsh/profiles/desktop/package.json → dsh.profile.bundles 追加 "dsh-model-picker"
+#    ~/.dsh/profiles/desktop/package.json → dsh.profile.bundles 追加
+#    "@five0016/dsh-model-picker"
 ```
 
 装好后确认四件事：
@@ -36,21 +68,29 @@ pnpm add "link:C:/Users/FiVE/Documents/deepseek-harness/default-workspace/plugin
 node -e "
 const fs=require('fs'),path=require('path');
 const prof='C:/Users/FiVE/.dsh/profiles/desktop';
+const id='@five0016/dsh-model-picker';
 const p=JSON.parse(fs.readFileSync(path.join(prof,'package.json'),'utf8'));
-console.log('dependency:      ', 'dsh-model-picker' in p.dependencies);
-console.log('in bundles:      ', p.dsh.profile.bundles.includes('dsh-model-picker'));
-console.log('client.js reach: ', fs.existsSync(path.join(prof,'node_modules/dsh-model-picker/client.js')));
-console.log('patch inserts:   ', /dsh-model-picker/.test(fs.readFileSync(path.join(prof,'node_modules/dsh-model-picker/cordis.patch.yml'),'utf8')));
+console.log('dependency:      ', id in p.dependencies);
+console.log('in bundles:      ', p.dsh.profile.bundles.includes(id));
+console.log('client.js reach: ', fs.existsSync(path.join(prof,'node_modules',id,'client.js')));
+console.log('patch insert:    ', fs.readFileSync(path.join(prof,'node_modules',id,'cordis.patch.yml'),'utf8').includes(id));
 "
 ```
 
+改完 `client.js` 后必须 `pnpm install --offline` 刷 rev（见下方"生效"）。
+
 ## 生效
 
-装完后**刷新页面**（纯前端插件，不用重启应用）：
+**只改了 `client.js`（前端代码）→ 刷新页面即可**（纯前端插件，不用重启应用）：
 
 - DSH 窗口内 **F12 → Console → `location.reload()`**（最可靠）；
 - 或 **Ctrl+R**；
 - 或关窗重开。
+
+**改了下面任一项 → 必须重启 DSH 应用**（这两处只在启动装配时读一次，刷新页面拿不到新值）：
+
+- profile 的 `package.json`（`dependencies` / `dsh.profile.bundles`）；
+- 插件自己的 `cordis.patch.yml`（bundle 行的 `id` / `name`）。
 
 刷新后右栏顶部的「+」里应出现「模型」入口；命令面板搜「模型」也能打开。
 

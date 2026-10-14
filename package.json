@@ -1,6 +1,6 @@
 {
-  "name": "dsh-model-picker",
-  "version": "0.3.2",
+  "name": "@five0016/dsh-model-picker",
+  "version": "0.3.3",
   "description": "Native right-sidebar tab that lists every model the host currently advertises, grouped by provider, highlights the active one, and switches the session model on click.",
   "keywords": [
     "dsh",

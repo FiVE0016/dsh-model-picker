@@ -6,7 +6,9 @@
 // loads in the browser because package.json declares
 //   dsh.client = { platform: "web", immediately: true, inject: [] }.
 
-export const name = 'dsh-model-picker'
+// Must equal the package name (and the bundle row's `name`): the host matches
+// the row's module specifier against the nearest package.json `name` field.
+export const name = '@five0016/dsh-model-picker'
 
 /** No-op host fiber: nothing to install on the server side. */
 export function apply() {

@@ -1,5 +1,12 @@
 # Bundle patch for this plugin. The host applies it after every bundle layer,
 # so the insert row below is what puts this plugin into the profile's bundle.
+#
+# The row `name` MUST equal this package's `name` field (the scoped npm name).
+# The host's client-modules scan resolves the row's module and walks up to the
+# nearest package.json, accepting it only when its `name` matches the row name
+# exactly (dsh-client-modules `nearestPackage`). A mismatch makes that scan
+# silently report "no client bundle": the host half still loads, but the
+# browser bundle is never served and the sidebar tab disappears with no error.
 - insert:
     - id: model-picker
-      name: 'dsh-model-picker'
+      name: '@five0016/dsh-model-picker'

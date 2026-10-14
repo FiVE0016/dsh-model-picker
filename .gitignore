@@ -1,0 +1,5 @@
+# Local pre-fix backups: kept on disk as rollback points, never in git.
+*.bak-before-*
+# npm pack output.
+*.tgz
+node_modules/

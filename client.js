@@ -137,14 +137,29 @@
      * from a plugin bundle is a gamble this plugin does not need to take. The shape
      * below matches the host's contract exactly.
      */
+    /** Scope key the framework uses when a store has no session binding (scope: 'root'). */
+    const ROOT_SCOPE_KEY = '__root__'
+
     function defineStore(decl) {
       // Every instance this handle mints, newest last. The slot framework does not
       // hand the instance to the inject factory (it passes sessionId + actions), so
       // the plugin recovers the live instance through this ledger.
       const minted = []
+      // The framework mints ONE instance per scope key and caches it:
+      // renderer `resolveStore(handle, scopeBinding)` does `handle.create(key)` with
+      // `key = scopeBinding.key`, i.e. the SESSION ID (client-ui-renderer L1688-1704).
+      // So the ledger must be keyed by that same scope key.
+      //
+      // Why this matters: `latest()` is "the most recently minted instance", which in
+      // a multi-session window belongs to whichever session minted last -- NOT
+      // necessarily the one this panel renders. Writing the catalog into that other
+      // instance leaves THIS panel reading its own empty state: "没有可用的模型。",
+      // an empty "当前：", and no error anywhere. Taking the instance for the panel's
+      // own session id is the fix.
+      const byScope = new Map()
       return {
         spec: decl,
-        create() {
+        create(scopeKey) {
           const store = createSnapshotStore(decl.init())
           const actions = {}
           for (const key of Object.keys(decl.actions ?? {})) {
@@ -160,8 +175,11 @@
             store
           }
           minted.push(instance)
+          byScope.set(scopeKey === undefined || scopeKey === null ? ROOT_SCOPE_KEY : scopeKey, instance)
           return instance
         },
+        /** The instance the framework minted for one scope key (session id), or null. */
+        forScope: (scopeKey) => byScope.get(scopeKey === undefined || scopeKey === null ? ROOT_SCOPE_KEY : scopeKey) ?? null,
         /** The most recently minted instance, or null before the framework called create(). */
         latest: () => (minted.length > 0 ? minted[minted.length - 1] : null)
       }
@@ -273,24 +291,71 @@
         return typeof face?.modelCatalog === 'function' && typeof face?.selectModel === 'function'
       }
 
-      /** Snapshot of the framework-minted instance, or the declared initial state. */
+      /** Declared initial state, used until this session's instance is minted. */
       const EMPTY_STATE = { catalog: null, loading: false, switching: false, error: null, filter: '' }
-      const snapshot = () => (storeHandle.latest() ? storeHandle.latest().getSnapshot() : EMPTY_STATE)
+
+      /**
+       * The store instance THIS panel renders: the one the framework minted for the
+       * panel's own session id. `live` / `latest()` are only a fallback for a host
+       * that hands no session id — never the primary path, because `latest()` is
+       * "whatever session minted last" and in a multi-session window that is a
+       * different instance than the panel's (see defineStore above).
+       */
+      const liveInstance = (sessionId = currentSessionId()) => {
+        if (sessionId !== null) {
+          const scoped = storeHandle.forScope(sessionId)
+          if (scoped !== null) return scoped
+        }
+        return live ?? storeHandle.latest()
+      }
+
+      /** Snapshot of this panel's own instance, or the declared initial state. */
+      const snapshot = () => {
+        const instance = liveInstance()
+        return instance !== null ? instance.getSnapshot() : EMPTY_STATE
+      }
 
       /** Re-read the catalog. Exposed to the body as the `reload` action. */
       const reload = () => { void load() }
 
+      // ---- 启动早期目录为空时的自动重试（「重启后没有可用模型」的病根修复）----
+      // 宿主刚启动时，模型渠道（providers）是异步加载的：remote 面已经可用，但
+      // 目录还是空（groups 为空数组）。旧逻辑把空目录当作结果缓存下来，面板就
+      // 永远空；刷新页面时渠道已就绪，才恢复——这就是「每次重启必空、刷新就好」
+      // 的完整闭环（探针实测：重启后 groups=0、刷新后 groups=24）。
+      // 现在：目录为空 = 尚未就绪 → 不缓存、定时重试，渠道就绪后列表自己出现；
+      // 超过上限才按「真没有模型」显示。
+      const EMPTY_CATALOG_RETRY_MS = 2000
+      const EMPTY_CATALOG_MAX_RETRIES = 30   // 最长约 60 秒
+      let emptyCatalogRetries = 0
+
+      /** 目录为空时安排一次重试；返回 true 表示「已安排，调用方应结束本次加载」。 */
+      const retryIfEmptyCatalog = (catalog) => {
+        if ((catalog?.groups?.length ?? 0) > 0) {
+          emptyCatalogRetries = 0
+          return false
+        }
+        if (emptyCatalogRetries < EMPTY_CATALOG_MAX_RETRIES) {
+          emptyCatalogRetries += 1
+          setTimeout(() => { void load() }, EMPTY_CATALOG_RETRY_MS)
+          return true
+        }
+        console.warn(`[${NS}] 宿主目录持续为空（已重试 ${EMPTY_CATALOG_MAX_RETRIES} 次），按空目录显示`)
+        return false
+      }
+
       async function load() {
-        // Read through the closure binding `live`, not storeHandle.latest(): the
-        // initial-load effect fires kick() during apply(), before inject() has run
-        // and set `live`. If load() read through latest() it would proceed against
-        // a minted-but-unbound instance and call directoryFor() with a guessed
-        // session — the "tab opens, panel is empty" failure. The inject callback
-        // sets `live` before calling kick(), so by the time load() actually runs,
-        // `live` is bound to the real instance.
-        const instance = live
-        if (instance === null) return
+        // Resolve the instance by SESSION, not by "last minted": renderer.resolveStore
+        // mints one instance per session id, so latest() may belong to another session.
         const sessionId = currentSessionId()
+        const instance = liveInstance(sessionId)
+        if (instance === null) {
+          // Nothing to write into yet (this session's instance is not minted).
+          // Say so instead of vanishing — a silent return here is exactly how
+          // "panel is empty and no error anywhere" used to happen.
+          console.warn(`[${NS}] load(): 本会话的 store 实例还没 mint 出来，本次加载跳过`)
+          return
+        }
         if (sessionId === null) {
           instance.actions.setError(t('error.noSession'))
           return
@@ -312,8 +377,9 @@
               instance.actions.setError(t('error.load', { message: result?.error?.message ?? '未知错误' }))
               return
             }
-            instance.actions.setCatalog(result.value)
             instance.actions.setLoading(false)
+            if (retryIfEmptyCatalog(result.value)) return
+            instance.actions.setCatalog(result.value)
             instance.actions.setError(null)
           } catch (error) {
             instance.actions.setLoading(false)
@@ -337,8 +403,9 @@
             default: value.current ?? null
           }
       
-          instance.actions.setCatalog(catalog)
           instance.actions.setLoading(false)
+          if (retryIfEmptyCatalog(catalog)) return
+          instance.actions.setCatalog(catalog)
           instance.actions.setError(null)
         } catch (error) {
           instance.actions.setLoading(false)
@@ -351,11 +418,13 @@
        * Switching only the effort keeps provider/model and re-submits.
        */
       async function select(provider, modelId, effort) {
-        // Same as load(): read through `live`, not storeHandle.latest(). Select is
-        // only called from the body (after inject), so `live` is always bound.
-        const instance = live
-        if (instance === null) return
+        // Same as load(): resolve the instance by session, not by "last minted".
         const sessionId = currentSessionId()
+        const instance = liveInstance(sessionId)
+        if (instance === null) {
+          console.warn(`[${NS}] select(): 本会话的 store 实例还没 mint 出来，忽略这次切换`)
+          return
+        }
         if (sessionId === null) {
           instance.actions.setError(t('error.noSession'))
           return
@@ -860,7 +929,12 @@
             // store would never be assigned — kick() would still read the old
             // instance and the panel would come up empty. That is exactly the
             // "opens blank on every new conversation" bug.
-            live = storeHandle.latest()
+            // Bind to THIS panel's instance — the one the framework minted for the
+            // session id it just handed us (renderer calls handle.create(sessionId)).
+            // Falling back to latest() keeps an older host working, but latest() is
+            // "whichever session minted last", so it must never be the primary path.
+            live = typeof sessionId === 'string' && sessionId.length > 0 ? storeHandle.forScope(sessionId) : null
+            live = live ?? storeHandle.latest()
             if (live !== null) kick()
             return {
               actions,
@@ -895,7 +969,7 @@
       // calls idempotent, so a race never double-loads.
       let loadAttempts = 0
       const kick = () => {
-        const instance = storeHandle.latest()
+        const instance = liveInstance()
         if (instance === null) return
         const state = instance.getSnapshot()
         if (state.catalog !== null || state.loading) return
@@ -904,7 +978,7 @@
           if (loadAttempts < 10) {
             loadAttempts += 1
             setTimeout(() => {
-              const next = storeHandle.latest()
+              const next = liveInstance()
               if (next !== null && next.getSnapshot().catalog === null && !next.getSnapshot().loading) kick()
             }, 300)
           } else {
@@ -917,6 +991,7 @@
       disposers.push(ctx.effect(() => { kick(); return () => {} }, NS + ': initial load'))
 
       mark('apply 完成')
+
       const hostWindow = (typeof window !== 'undefined' ? window : null)
       if (hostWindow) {
         hostWindow.__DSH_MODEL_PICKER__ = {
@@ -959,14 +1034,21 @@
   // `dsh.client.immediately: true` in package.json is what puts this row in the
   // boot graph — this plugin registers no conversation slot, so without it the
   // bundle would load but never execute.
+  //
+  // The registration id MUST equal the package name (the scoped npm name). The
+  // host serves this bundle under the client-graph row id, and that row id is the
+  // package name: dsh-client-modules resolves the row's module and only accepts
+  // the nearest package.json whose `name` matches the row name exactly. Under an
+  // unscoped id the host decides the package "declares no client bundle", serves
+  // nothing, and the sidebar tab vanishes with no logged error.
   window.__ModuleLoader__.load({
-    id: 'dsh-model-picker',
+    id: '@five0016/dsh-model-picker',
     factory: (require) => {
       const local = window.__DSH_MODEL_PICKER_MODULES__ ?? {}
       const plugin = local['./src/browser.js']
 
       return {
-        name: 'dsh-model-picker',
+        name: '@five0016/dsh-model-picker',
         inject: plugin.inject,
         apply(ctx) {
           return plugin.apply(ctx, require)
